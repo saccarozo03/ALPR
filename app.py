@@ -1,7 +1,9 @@
 # app.py
 # Run: streamlit run app.py
 
+import math
 import os
+from datetime import datetime
 import streamlit as st
 
 from config import AppConfig
@@ -12,6 +14,20 @@ from engine import run_yolo_ocr, decide_in_out, now_ts
 from model_loader import load_models
 
 CFG = AppConfig()
+
+def parse_ts(ts: str) -> datetime:
+    return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+
+def compute_fee(duration_minutes: int, rate: dict, grace_minutes: int) -> int:
+    if duration_minutes <= grace_minutes:
+        return 0
+    billable_minutes = max(0, duration_minutes - grace_minutes)
+    billable_hours = math.ceil(billable_minutes / 60)
+    fee = int(rate.get("first_hour", 0)) + max(0, billable_hours - 1) * int(rate.get("hourly", 0))
+    daily_cap = int(rate.get("daily_cap", 0))
+    if daily_cap > 0:
+        fee = min(fee, daily_cap)
+    return int(fee)
 
 # ----------- Page config (UI first) -----------
 st.set_page_config(page_title="Parking LPR Live", layout="wide")
@@ -62,25 +78,68 @@ with st.sidebar:
             st.rerun()
 
     st.divider()
-    st.header("Giá theo ngày")
+    st.header("Cấu hình giá")
 
     if "rates" not in st.session_state:
-        st.session_state["rates"] = {"motorbike": 5000, "car": 20000}
+        st.session_state["rates"] = {
+            "motorbike": {"first_hour": 5000, "hourly": 2000, "daily_cap": 20000},
+            "car": {"first_hour": 20000, "hourly": 10000, "daily_cap": 100000},
+            "grace_minutes": 10,
+        }
 
     rates = st.session_state["rates"]
-    rates["motorbike"] = st.number_input(
-        "Xe máy (VND/ngày)",
+    rates["grace_minutes"] = st.number_input(
+        "Miễn phí phút đầu (grace)",
         min_value=0,
-        value=int(rates["motorbike"]),
-        step=1000,
-        key="rate_motorbike",
+        value=int(rates.get("grace_minutes", 0)),
+        step=1,
+        key="rate_grace_minutes",
     )
-    rates["car"] = st.number_input(
-        "Ô tô (VND/ngày)",
+
+    st.subheader("Xe máy")
+    rates["motorbike"]["first_hour"] = st.number_input(
+        "Phí giờ đầu (VND)",
         min_value=0,
-        value=int(rates["car"]),
+        value=int(rates["motorbike"]["first_hour"]),
         step=1000,
-        key="rate_car",
+        key="rate_motorbike_first",
+    )
+    rates["motorbike"]["hourly"] = st.number_input(
+        "Phí mỗi giờ tiếp theo (VND)",
+        min_value=0,
+        value=int(rates["motorbike"]["hourly"]),
+        step=1000,
+        key="rate_motorbike_hourly",
+    )
+    rates["motorbike"]["daily_cap"] = st.number_input(
+        "Trần phí/ngày (0 = không giới hạn)",
+        min_value=0,
+        value=int(rates["motorbike"].get("daily_cap", 0)),
+        step=1000,
+        key="rate_motorbike_cap",
+    )
+
+    st.subheader("Ô tô")
+    rates["car"]["first_hour"] = st.number_input(
+        "Phí giờ đầu (VND)",
+        min_value=0,
+        value=int(rates["car"]["first_hour"]),
+        step=1000,
+        key="rate_car_first",
+    )
+    rates["car"]["hourly"] = st.number_input(
+        "Phí mỗi giờ tiếp theo (VND)",
+        min_value=0,
+        value=int(rates["car"]["hourly"]),
+        step=1000,
+        key="rate_car_hourly",
+    )
+    rates["car"]["daily_cap"] = st.number_input(
+        "Trần phí/ngày (0 = không giới hạn)",
+        min_value=0,
+        value=int(rates["car"].get("daily_cap", 0)),
+        step=1000,
+        key="rate_car_cap",
     )
     st.session_state["rates"] = rates
 
@@ -114,8 +173,8 @@ st.session_state["vehicle_type"] = st.session_state["vehicle_type_widget"]
 shot = st.camera_input("Bấm chụp để nhận diện", key="camera_shot")
 
 st.caption(
-    "Luồng: Chụp → YOLO detect → OCR → chuẩn hoá → tra DB trong ngày → tự IN/OUT "
-    "→ tính tiền theo loại xe (chọn tay) khi OUT → lưu & hiển thị so sánh khi OUT"
+    "Luồng: Chụp → YOLO detect → OCR → chuẩn hoá → tra DB mở phiên → tự IN/OUT "
+    "→ tính tiền theo thời lượng khi OUT → lưu & hiển thị so sánh khi OUT"
 )
 
 # If no shot, stop here
@@ -169,37 +228,52 @@ try:
         st.warning("OCR chưa ra biển số hợp lệ. Bạn chụp lại giúp.")
         st.stop()
 
-    # Decide IN/OUT by DB (in-day)
+    # Decide IN/OUT by DB (open session)
     action = decide_in_out(db, plate_canon)
-    last_in = db.latest_in_today(plate_canon) if action == "OUT" else None
+    last_in = db.latest_in(plate_canon) if action == "OUT" else None
+    last_in_today = db.latest_in_today(plate_canon) if action == "OUT" else None
 
-    # Fee: only on OUT (manual vehicle_type)
-    rates = st.session_state.get("rates", {"motorbike": 5000, "car": 20000})
-    fee = int(rates.get(vehicle_type, 0)) if action == "OUT" else 0
+    rates = st.session_state.get("rates", {})
+    grace_minutes = int(rates.get("grace_minutes", 0))
 
     ts = now_ts()
+
+    duration_minutes = 0
+    fee = 0
+    vehicle_type_fee = vehicle_type
+    if action == "OUT":
+        if last_in is None:
+            st.warning("Không tìm thấy lượt IN trước đó để tính phí.")
+        else:
+            vehicle_type_fee = last_in.get("vehicle_type", vehicle_type)
+            in_time = parse_ts(last_in["ts"])
+            out_time = parse_ts(ts)
+            duration_minutes = max(0, int((out_time - in_time).total_seconds() // 60))
+            fee = compute_fee(duration_minutes, rates.get(vehicle_type_fee, {}), grace_minutes)
+
     full_path, crop_path = save_pair(CFG.run_dir, out["annotated"], out["crop"])
 
     # IMPORTANT: insert_event signature MUST match db.py (vehicle_type + fee)
-    db.insert_event(ts, action, vehicle_type, plate_canon, plate_display, fee, full_path, crop_path)
+    db.insert_event(ts, action, vehicle_type_fee, plate_canon, plate_display, fee, full_path, crop_path)
 
-    vt_label = "Xe máy" if vehicle_type == "motorbike" else "Ô tô"
+    vt_label = "Xe máy" if vehicle_type_fee == "motorbike" else "Ô tô"
+    duration_text = f"{duration_minutes} phút" if action == "OUT" else "N/A"
     st.success(
         f"Hệ thống xác định: **{action}** | **{plate_display}** | "
-        f"loại={vt_label} | fee={fee:,} VND | time={ts}"
+        f"loại={vt_label} | fee={fee:,} VND | thời lượng={duration_text} | time={ts}"
     )
 
     # Compare IN vs OUT
-    if action == "OUT" and last_in is not None:
+    if action == "OUT" and last_in_today is not None:
         st.subheader("So sánh IN vs OUT (trong ngày)")
         colA, colB = st.columns(2)
 
         with colA:
             st.markdown("### Ảnh lúc IN (gần nhất hôm nay)")
-            if last_in.get("img_path") and os.path.exists(last_in["img_path"]):
-                st.image(last_in["img_path"], caption=f"IN @ {last_in['ts']}", use_container_width=True)
-            if last_in.get("crop_path") and os.path.exists(last_in["crop_path"]):
-                st.image(last_in["crop_path"], caption="Crop IN", use_container_width=True)
+            if last_in_today.get("img_path") and os.path.exists(last_in_today["img_path"]):
+                st.image(last_in_today["img_path"], caption=f"IN @ {last_in_today['ts']}", use_container_width=True)
+            if last_in_today.get("crop_path") and os.path.exists(last_in_today["crop_path"]):
+                st.image(last_in_today["crop_path"], caption="Crop IN", use_container_width=True)
 
         with colB:
             st.markdown("### Ảnh hiện tại (OUT)")

@@ -45,7 +45,7 @@ def run_yolo_ocr(yolo, ocr, img_bgr) -> Optional[Dict[str, Any]]:
     }
 
 def decide_in_out(db, plate_canon: str) -> str:
-    last = db.latest_event_today(plate_canon)
+    last = db.latest_event(plate_canon)
     if last is None:
         return "IN"
     return "OUT" if last["action"] == "IN" else "IN"
