@@ -7,6 +7,7 @@ class AppConfig:
     db_path: str = "parking.db"
     run_dir: str = "runs"
     users: dict = None
+    admin_users: tuple = ("admin",)
 
     def __post_init__(self):
         if self.users is None:
