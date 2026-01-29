@@ -1,4 +1,5 @@
-#  Vehicle License Plate Recognition System (DATN)
+#  Vehicle License Plate Recognition System 
+
 
  Graduation Thesis Project — Hanoi University of Science and Technology (HUST)  
 Major: Mechatronics Engineering (Advanced Program)
