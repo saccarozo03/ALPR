@@ -63,6 +63,20 @@ class ParkingDB:
         conn.close()
         return dict(row) if row else None
 
+    def latest_event(self, plate_canon: str) -> Optional[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM events
+            WHERE plate_canonical = ?
+            ORDER BY id DESC
+            LIMIT 1
+        """, (plate_canon,))
+        row = cur.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
     def latest_in_today(self, plate_canon: str) -> Optional[Dict[str, Any]]:
         today = date.today().strftime("%Y-%m-%d")
         conn = sqlite3.connect(self.db_path)
@@ -74,6 +88,20 @@ class ParkingDB:
             ORDER BY id DESC
             LIMIT 1
         """, (today, plate_canon))
+        row = cur.fetchone()
+        conn.close()
+        return dict(row) if row else None
+
+    def latest_in(self, plate_canon: str) -> Optional[Dict[str, Any]]:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT * FROM events
+            WHERE plate_canonical = ? AND action='IN'
+            ORDER BY id DESC
+            LIMIT 1
+        """, (plate_canon,))
         row = cur.fetchone()
         conn.close()
         return dict(row) if row else None
