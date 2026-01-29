@@ -45,6 +45,7 @@ with st.sidebar:
     else:
         st.write(f"User: **{st.session_state.get('username','')}**")
         render_logout()
+    is_admin = st.session_state.get("username") in CFG.admin_users
 
     st.divider()
     st.header("Model (Lazy load)")
@@ -79,6 +80,8 @@ with st.sidebar:
 
     st.divider()
     st.header("Cấu hình giá")
+    if not is_admin:
+        st.info("Chỉ admin mới được chỉnh giá.")
 
     if "rates" not in st.session_state:
         st.session_state["rates"] = {
@@ -94,6 +97,7 @@ with st.sidebar:
         value=int(rates.get("grace_minutes", 0)),
         step=1,
         key="rate_grace_minutes",
+        disabled=not is_admin,
     )
 
     st.subheader("Xe máy")
@@ -103,6 +107,7 @@ with st.sidebar:
         value=int(rates["motorbike"]["first_hour"]),
         step=1000,
         key="rate_motorbike_first",
+        disabled=not is_admin,
     )
     rates["motorbike"]["hourly"] = st.number_input(
         "Phí mỗi giờ tiếp theo (VND)",
@@ -110,6 +115,7 @@ with st.sidebar:
         value=int(rates["motorbike"]["hourly"]),
         step=1000,
         key="rate_motorbike_hourly",
+        disabled=not is_admin,
     )
     rates["motorbike"]["daily_cap"] = st.number_input(
         "Trần phí/ngày (0 = không giới hạn)",
@@ -117,6 +123,7 @@ with st.sidebar:
         value=int(rates["motorbike"].get("daily_cap", 0)),
         step=1000,
         key="rate_motorbike_cap",
+        disabled=not is_admin,
     )
 
     st.subheader("Ô tô")
@@ -126,6 +133,7 @@ with st.sidebar:
         value=int(rates["car"]["first_hour"]),
         step=1000,
         key="rate_car_first",
+        disabled=not is_admin,
     )
     rates["car"]["hourly"] = st.number_input(
         "Phí mỗi giờ tiếp theo (VND)",
@@ -133,6 +141,7 @@ with st.sidebar:
         value=int(rates["car"]["hourly"]),
         step=1000,
         key="rate_car_hourly",
+        disabled=not is_admin,
     )
     rates["car"]["daily_cap"] = st.number_input(
         "Trần phí/ngày (0 = không giới hạn)",
@@ -140,6 +149,7 @@ with st.sidebar:
         value=int(rates["car"].get("daily_cap", 0)),
         step=1000,
         key="rate_car_cap",
+        disabled=not is_admin,
     )
     st.session_state["rates"] = rates
 
