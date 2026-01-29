@@ -245,11 +245,19 @@ try:
         if last_in is None:
             st.warning("Không tìm thấy lượt IN trước đó để tính phí.")
         else:
-            vehicle_type_fee = last_in.get("vehicle_type", vehicle_type)
             in_time = parse_ts(last_in["ts"])
             out_time = parse_ts(ts)
             duration_minutes = max(0, int((out_time - in_time).total_seconds() // 60))
             fee = compute_fee(duration_minutes, rates.get(vehicle_type_fee, {}), grace_minutes)
+            last_in_type = last_in.get("vehicle_type")
+            if last_in_type and last_in_type != vehicle_type_fee:
+                in_label = "Xe máy" if last_in_type == "motorbike" else "Ô tô"
+                out_label = "Xe máy" if vehicle_type_fee == "motorbike" else "Ô tô"
+                st.warning(
+                    "Loại xe lúc IN khác lựa chọn hiện tại. "
+                    f"IN: {in_label} → OUT: {out_label}. "
+                    "Hệ thống đang tính phí theo lựa chọn hiện tại."
+                )
 
     full_path, crop_path = save_pair(CFG.run_dir, out["annotated"], out["crop"])
 
