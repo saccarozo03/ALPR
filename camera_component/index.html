@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>External Camera Selector</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: sans-serif;
+    }
+    body {
+      margin: 0;
+      padding: 12px;
+      font-size: 14px;
+    }
+    .row {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    video {
+      width: 100%;
+      max-height: 360px;
+      background: #111;
+      border-radius: 8px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    select, button {
+      padding: 6px 10px;
+      font-size: 14px;
+    }
+    .hint {
+      font-size: 12px;
+      opacity: 0.8;
+    }
+    canvas {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <div id="label"></div>
+    <div class="controls">
+      <select id="deviceSelect"></select>
+      <button id="startBtn" type="button">Bật camera</button>
+      <button id="captureBtn" type="button">Chụp ảnh</button>
+    </div>
+    <video id="video" playsinline autoplay></video>
+    <div class="hint" id="status">Chưa bật camera.</div>
+    <canvas id="canvas"></canvas>
+  </div>
+
+  <script>
+    const video = document.getElementById("video");
+    const deviceSelect = document.getElementById("deviceSelect");
+    const startBtn = document.getElementById("startBtn");
+    const captureBtn = document.getElementById("captureBtn");
+    const status = document.getElementById("status");
+    const label = document.getElementById("label");
+    const canvas = document.getElementById("canvas");
+
+    let currentStream = null;
+    let currentLabel = "";
+
+    const sendMessage = (type, data) => {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type,
+        ...data,
+      }, "*");
+    };
+
+    const setFrameHeight = (height) => {
+      sendMessage("streamlit:setFrameHeight", { height });
+    };
+
+    const sendValue = (value) => {
+      sendMessage("streamlit:setComponentValue", { value });
+    };
+
+    const updateStatus = (text) => {
+      status.textContent = text;
+    };
+
+    const stopStream = () => {
+      if (currentStream) {
+        currentStream.getTracks().forEach((track) => track.stop());
+        currentStream = null;
+      }
+    };
+
+    const startStream = async (deviceId) => {
+      stopStream();
+      try {
+        const constraints = deviceId
+          ? { video: { deviceId: { exact: deviceId } } }
+          : { video: true };
+        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = currentStream;
+        updateStatus("Camera đang chạy.");
+      } catch (err) {
+        updateStatus(`Không bật được camera: ${err.message || err}`);
+      }
+    };
+
+    const refreshDevices = async () => {
+      deviceSelect.innerHTML = "";
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter((d) => d.kind === "videoinput");
+        if (videoDevices.length === 0) {
+          const opt = document.createElement("option");
+          opt.value = "";
+          opt.textContent = "Không tìm thấy camera";
+          deviceSelect.appendChild(opt);
+          deviceSelect.disabled = true;
+          return;
+        }
+        videoDevices.forEach((device, idx) => {
+          const opt = document.createElement("option");
+          opt.value = device.deviceId;
+          opt.textContent = device.label || `Camera ${idx + 1}`;
+          deviceSelect.appendChild(opt);
+        });
+        deviceSelect.disabled = false;
+      } catch (err) {
+        updateStatus(`Không lấy được danh sách camera: ${err.message || err}`);
+      }
+    };
+
+    startBtn.addEventListener("click", async () => {
+      await startStream(deviceSelect.value);
+      await refreshDevices();
+      currentLabel = deviceSelect.selectedOptions[0]?.textContent || "";
+      setFrameHeight(520);
+    });
+
+    deviceSelect.addEventListener("change", async () => {
+      currentLabel = deviceSelect.selectedOptions[0]?.textContent || "";
+      await startStream(deviceSelect.value);
+    });
+
+    captureBtn.addEventListener("click", () => {
+      if (!currentStream) {
+        updateStatus("Chưa bật camera để chụp.");
+        return;
+      }
+      const width = video.videoWidth || 640;
+      const height = video.videoHeight || 480;
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
+      sendValue({
+        data_url: dataUrl,
+        device_label: currentLabel,
+        captured_at: new Date().toISOString(),
+      });
+      updateStatus("Đã chụp ảnh, gửi về app.");
+    });
+
+    const init = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        updateStatus("Trình duyệt không hỗ trợ camera.");
+        return;
+      }
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true });
+        await refreshDevices();
+        updateStatus("Chọn camera rồi bấm Bật camera.");
+      } catch (err) {
+        updateStatus(`Không cấp quyền camera: ${err.message || err}`);
+      }
+      setFrameHeight(520);
+      sendMessage("streamlit:componentReady", { apiVersion: 1 });
+    };
+
+    window.addEventListener("message", (event) => {
+      if (event.data?.type === "streamlit:render") {
+        const args = event.data?.args || {};
+        label.textContent = args.label || "Camera ngoài";
+      }
+    });
+
+    init();
+  </script>
+</body>
+</html>
