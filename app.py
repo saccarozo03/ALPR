@@ -1,10 +1,12 @@
 # app.py
 # Run: streamlit run app.py
 
+import base64
 import math
 import os
 from datetime import datetime
 import streamlit as st
+import streamlit.components.v1 as components
 
 from config import AppConfig
 from db import ParkingDB
@@ -14,6 +16,7 @@ from engine import run_yolo_ocr, decide_in_out, now_ts
 from model_loader import load_models
 
 CFG = AppConfig()
+camera_selector = components.declare_component("camera_selector", path="camera_component")
 
 def parse_ts(ts: str) -> datetime:
     return datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
@@ -28,6 +31,15 @@ def compute_fee(duration_minutes: int, rate: dict, grace_minutes: int) -> int:
     if daily_cap > 0:
         fee = min(fee, daily_cap)
     return int(fee)
+
+def bytes_from_data_url(data_url: str) -> bytes | None:
+    if not data_url or "base64," not in data_url:
+        return None
+    _, encoded = data_url.split("base64,", 1)
+    try:
+        return base64.b64decode(encoded)
+    except (ValueError, TypeError):
+        return None
 
 # ----------- Page config (UI first) -----------
 st.set_page_config(page_title="Parking LPR Live", layout="wide")
@@ -165,6 +177,12 @@ st.divider()
 # ----------- Main UI (render first) -----------
 st.subheader("Live Camera")
 
+camera_source = st.selectbox(
+    "Nguồn camera",
+    ["Mặc định (trình duyệt)", "Chọn camera ngoài (USB/HDMI)"],
+    key="camera_source",
+)
+
 # (UI-first) init default vehicle type for fee calculation
 if "vehicle_type" not in st.session_state:
     st.session_state["vehicle_type"] = "car"
@@ -180,7 +198,20 @@ vehicle_type = st.radio(
 # sync widget -> canonical state (avoid Streamlit key conflicts)
 st.session_state["vehicle_type"] = st.session_state["vehicle_type_widget"]
 
-shot = st.camera_input("Bấm chụp để nhận diện", key="camera_shot")
+shot_bytes = None
+if camera_source == "Mặc định (trình duyệt)":
+    shot = st.camera_input("Bấm chụp để nhận diện", key="camera_shot")
+    if shot is not None:
+        shot_bytes = shot.getvalue()
+else:
+    st.caption("Chọn camera ngoài từ danh sách bên dưới, bật camera rồi bấm chụp.")
+    external_capture = camera_selector(label="Camera ngoài", key="external_camera")
+    if isinstance(external_capture, dict):
+        data_url = external_capture.get("data_url")
+        shot_bytes = bytes_from_data_url(data_url)
+        device_label = external_capture.get("device_label")
+        if shot_bytes and device_label:
+            st.success(f"Đã nhận ảnh từ: {device_label}")
 
 st.caption(
     "Luồng: Chụp → YOLO detect → OCR → chuẩn hoá → tra DB mở phiên → tự IN/OUT "
@@ -188,7 +219,7 @@ st.caption(
 )
 
 # If no shot, stop here
-if shot is None:
+if shot_bytes is None:
     st.info("Mở camera và bấm chụp để hệ thống nhận diện.")
     st.stop()
 
@@ -204,7 +235,7 @@ if yolo is None or ocr is None:
     st.stop()
 
 # Decode image from camera
-img_bgr = bgr_from_bytes(shot.getvalue())
+img_bgr = bgr_from_bytes(shot_bytes)
 if img_bgr is None:
     st.error("Không decode được ảnh từ camera.")
     st.stop()
