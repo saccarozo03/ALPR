@@ -4,6 +4,7 @@
 import base64
 import math
 import os
+import time
 from datetime import datetime
 import streamlit as st
 import streamlit.components.v1 as components
@@ -64,7 +65,10 @@ with st.sidebar:
 
     loaded = st.session_state.get("model_loaded", False)
     st.write("Trạng thái:", "Đã load" if loaded else "Chưa load")
+    st.caption("YOLO")
     st.caption(CFG.model_path)
+    st.caption("PaddleOCR")
+    st.caption("PP-OCRv5_mobile_rec + PP-OCRv4_mobile_det")
 
     colA, colB = st.columns(2)
     with colA:
@@ -175,7 +179,11 @@ d3.metric("Lượt OUT ô tô", counts.get("car", 0))
 st.divider()
 
 # ----------- Main UI (render first) -----------
-st.subheader("Live Camera")
+header_col, model_col = st.columns([3, 1])
+with header_col:
+    st.subheader("Live Camera")
+with model_col:
+    st.caption("Model: YOLO • PaddleOCR")
 
 camera_source = st.selectbox(
     "Nguồn camera",
@@ -242,8 +250,10 @@ if img_bgr is None:
 
 # Inference with try/except
 try:
+    start_time = time.perf_counter()
     with st.spinner("Đang dự đoán YOLO + OCR..."):
         out = run_yolo_ocr(yolo, ocr, img_bgr)
+    processing_ms = (time.perf_counter() - start_time) * 1000
 
     if out is None:
         st.warning("Không phát hiện biển số.")
@@ -311,6 +321,7 @@ try:
         f"Hệ thống xác định: **{action}** | **{plate_display}** | "
         f"loại={vt_label} | fee={fee:,} VND | thời lượng={duration_text} | time={ts}"
     )
+    st.caption(f"Thời gian xử lý: {processing_ms:.0f} ms")
 
     # Compare IN vs OUT
     if action == "OUT" and last_in_today is not None:
